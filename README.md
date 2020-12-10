@@ -1,3 +1,6 @@
+# Fork with new parameter ssltermination
+This parameter controls whether an initial SSLRequest will be sent or if the client initiates directly with ssl
+
 <img height="90" alt="Slonik Duke" align="right" src="docs/media/img/slonik_duke.png" />
 
 # PostgreSQL JDBC Driver
