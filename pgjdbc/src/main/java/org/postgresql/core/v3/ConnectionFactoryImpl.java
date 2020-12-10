@@ -26,6 +26,7 @@ import org.postgresql.hostchooser.HostRequirement;
 import org.postgresql.hostchooser.HostStatus;
 import org.postgresql.jdbc.GSSEncMode;
 import org.postgresql.jdbc.SslMode;
+import org.postgresql.jdbc.SslTermination;
 import org.postgresql.sspi.ISSPIClient;
 import org.postgresql.util.GT;
 import org.postgresql.util.HostSpec;
@@ -91,7 +92,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
 
   private PGStream tryConnect(String user, String database,
       Properties info, SocketFactory socketFactory, HostSpec hostSpec,
-      SslMode sslMode, GSSEncMode gssEncMode)
+      SslMode sslMode, SslTermination sslTermination, GSSEncMode gssEncMode)
       throws SQLException, IOException {
     int connectTimeout = PGProperty.CONNECT_TIMEOUT.getInt(info) * 1000;
 
@@ -146,7 +147,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
     // if we have a security context then gss negotiation succeeded. Do not attempt SSL negotiation
     if (!newStream.isGssEncrypted()) {
       // Construct and send an ssl startup packet if requested.
-      newStream = enableSSL(newStream, sslMode, info, connectTimeout);
+      newStream = enableSSL(newStream, sslMode, sslTermination, info, connectTimeout);
     }
 
     // Make sure to set network timeout again, in case the stream changed due to GSS or SSL
@@ -167,6 +168,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
   public QueryExecutor openConnectionImpl(HostSpec[] hostSpecs, String user, String database,
       Properties info) throws SQLException {
     SslMode sslMode = SslMode.of(info);
+    SslTermination sslTermination = SslTermination.of(info);
     GSSEncMode gssEncMode = GSSEncMode.of(info);
 
     HostRequirement targetServerType;
@@ -210,7 +212,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
       PGStream newStream = null;
       try {
         try {
-          newStream = tryConnect(user, database, info, socketFactory, hostSpec, sslMode, gssEncMode);
+          newStream = tryConnect(user, database, info, socketFactory, hostSpec, sslMode, sslTermination, gssEncMode);
         } catch (SQLException e) {
           if (sslMode == SslMode.PREFER
               && PSQLState.INVALID_AUTHORIZATION_SPECIFICATION.getState().equals(e.getSQLState())) {
@@ -219,7 +221,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
             Throwable ex = null;
             try {
               newStream =
-                  tryConnect(user, database, info, socketFactory, hostSpec, SslMode.DISABLE,gssEncMode);
+                  tryConnect(user, database, info, socketFactory, hostSpec, SslMode.DISABLE, sslTermination, gssEncMode);
               LOGGER.log(Level.FINE, "Downgraded to non-encrypted connection for host {0}",
                   hostSpec);
             } catch (SQLException ee) {
@@ -240,7 +242,8 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
             Throwable ex = null;
             try {
               newStream =
-                  tryConnect(user, database, info, socketFactory, hostSpec, SslMode.REQUIRE, gssEncMode);
+                  tryConnect(user, database, info, socketFactory, hostSpec, SslMode.REQUIRE,
+                      sslTermination, gssEncMode);
               LOGGER.log(Level.FINE, "Upgraded to encrypted connection for host {0}",
                   hostSpec);
             } catch (SQLException ee) {
@@ -499,7 +502,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
     }
   }
 
-  private PGStream enableSSL(PGStream pgStream, SslMode sslMode, Properties info,
+  private PGStream enableSSL(PGStream pgStream, SslMode sslMode, SslTermination sslTermination, Properties info,
       int connectTimeout)
       throws IOException, PSQLException {
     if (sslMode == SslMode.DISABLE) {
@@ -507,6 +510,11 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
     }
     if (sslMode == SslMode.ALLOW) {
       // Allow ==> start with plaintext, use encryption if required by server
+      return pgStream;
+    }
+    if (sslTermination == SslTermination.PROXY) {
+      // Allow ==> start without SSLRequest
+      org.postgresql.ssl.MakeSSL.convert(pgStream, info);
       return pgStream;
     }
 
